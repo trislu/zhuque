@@ -1,21 +1,26 @@
 use std::{
     env,
     io::{stderr, stdout},
+    net::SocketAddr,
+    path::PathBuf,
 };
 
+use axum::{Router, routing::get};
+use axum_server::tls_rustls::RustlsConfig;
 use clap::Parser;
-use tracing::{debug, info, subscriber};
+use tracing::{debug, subscriber};
 use tracing_appender::rolling;
 use tracing_subscriber::fmt::format::FmtSpan;
 
-use crate::cli::{Cli, Trace};
+use crate::cli::{Args, Trace};
 
 mod cli;
 
-fn main() {
-    let cli = Cli::parse();
+#[tokio::main]
+async fn main() {
+    let args = Args::parse();
 
-    let (non_blocking_writer, _guard) = match cli.trace {
+    let (non_blocking_writer, _guard) = match args.trace {
         Trace::Stdout => tracing_appender::non_blocking(stdout()),
         Trace::Stderr => tracing_appender::non_blocking(stderr()),
         Trace::Tmp => {
@@ -44,14 +49,30 @@ fn main() {
         // Disabled ANSI color codes for better compatibility with some terminals
         .with_ansi(false)
         // TODO: log level control
-        .with_max_level(cli.level)
+        .with_max_level(args.level)
         // Build the subscriber
         .finish();
 
     // use that subscriber to process traces emitted after this point
     subscriber::set_global_default(sub).expect("Could not set global default subscriber");
 
-    debug!("{:?}", cli);
+    debug!("{:?}", args);
 
-    info!("Hello, taikonaut!");
+    let config = RustlsConfig::from_pem_file(PathBuf::from(args.cert), PathBuf::from(args.key))
+        .await
+        .unwrap();
+    let app = Router::new().route("/", get(handler));
+
+    // run https server
+    let addr = SocketAddr::from((args.addr, args.port));
+    debug!("listening on {}", addr);
+    axum_server::bind_rustls(addr, config)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
+}
+
+#[allow(dead_code)]
+async fn handler() -> &'static str {
+    "Hello, taikonaut!"
 }

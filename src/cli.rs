@@ -35,7 +35,7 @@ impl From<Level> for LevelFilter {
 
 #[derive(Debug, Clone, Parser)]
 #[command(author, about = "zhuque", long_about = None)]
-pub(crate) struct Cli {
+pub(crate) struct Args {
     #[arg(
         short = 'a',
         long = "addr",
