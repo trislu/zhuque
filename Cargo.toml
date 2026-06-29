@@ -1,6 +1,10 @@
 [package]
 name = "zhuque"
 version = "0.1.0"
+authors = [
+    "Lu Kai <mailto:lukai@mail.ustc.edu.cn>",
+]
 edition = "2024"
 
 [dependencies]
+clap = { version = "4.6", features = ["derive"] }
