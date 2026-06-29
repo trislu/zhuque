@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 
 use clap::{Parser, ValueEnum};
+use tracing::level_filters::LevelFilter;
 
 #[derive(Clone, Debug, ValueEnum)]
 pub(crate) enum Trace {
@@ -9,7 +10,30 @@ pub(crate) enum Trace {
     Tmp,
 }
 
-#[derive(Debug, Parser)]
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(crate) enum Level {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Off,
+}
+
+impl From<Level> for LevelFilter {
+    fn from(value: Level) -> LevelFilter {
+        match value {
+            Level::Trace => LevelFilter::TRACE,
+            Level::Debug => LevelFilter::DEBUG,
+            Level::Info => LevelFilter::INFO,
+            Level::Warn => LevelFilter::WARN,
+            Level::Error => LevelFilter::ERROR,
+            Level::Off => LevelFilter::OFF,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Parser)]
 #[command(author, about = "zhuque", long_about = None)]
 pub(crate) struct Cli {
     #[arg(
@@ -23,7 +47,7 @@ pub(crate) struct Cli {
     #[arg(
         short = 'p',
         long = "port",
-        value_name = "ADDR",
+        value_name = "PORT",
         default_value_t = 1965,
         help = "server port"
     )]
@@ -44,6 +68,8 @@ pub(crate) struct Cli {
         help = "key pem file path"
     )]
     pub(crate) key: String,
-    #[clap(value_enum, default_value_t = Trace::Stdout, help = "trace output file")]
+    #[clap(value_enum, short='t', long="trace", default_value_t = Trace::Stderr, help = "trace output")]
     pub(crate) trace: Trace,
+    #[clap(value_enum, short='l', long="level", default_value_t = Level::Info, help = "trace output level")]
+    pub(crate) level: Level,
 }
