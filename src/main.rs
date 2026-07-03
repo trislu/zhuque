@@ -2,22 +2,28 @@ use std::{
     env,
     io::{stderr, stdout},
     net::SocketAddr,
-    path::PathBuf,
+    sync::Arc,
 };
 
-use axum::{Router, routing::get};
-use axum_server::tls_rustls::RustlsConfig;
+use anyhow::{Context, Result};
 use clap::Parser;
-use tracing::{debug, subscriber};
+use rustls::{
+    ServerConfig,
+    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
+};
+use tokio::net::TcpListener;
+use tokio_rustls::{TlsAcceptor, rustls};
+use tracing::{debug, error, subscriber};
 use tracing_appender::rolling;
 use tracing_subscriber::fmt::format::FmtSpan;
 
 use crate::cli::{Args, Trace};
 
 mod cli;
+mod gmi;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     let args = Args::parse();
 
     let (non_blocking_writer, _guard) = match args.trace {
@@ -58,21 +64,39 @@ async fn main() {
 
     debug!("{:?}", args);
 
-    let config = RustlsConfig::from_pem_file(PathBuf::from(args.cert), PathBuf::from(args.key))
-        .await
-        .unwrap();
-    let app = Router::new().route("/", get(handler));
+    let certs = CertificateDer::from_pem_file(&args.cert)
+        .with_context(|| format!("failed to read cert pem file: {}", args.cert))
+        .map(|c| vec![c])?;
+    let key = PrivateKeyDer::from_pem_file(&args.key)
+        .with_context(|| format!("failed to read key pem file: {}", args.key))?;
+
+    let config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)?;
 
     // run https server
     let addr = SocketAddr::from((args.addr, args.port));
     debug!("listening on {}", addr);
-    axum_server::bind_rustls(addr, config)
-        .serve(app.into_make_service())
-        .await
-        .unwrap();
-}
 
-#[allow(dead_code)]
-async fn handler() -> &'static str {
-    "Hello, taikonaut!"
+    let acceptor = TlsAcceptor::from(Arc::new(config));
+    let listener = TcpListener::bind(addr).await?;
+    println!("Gemini server listening on {}", addr);
+
+    loop {
+        let (tcp_stream, from) = listener.accept().await?;
+        let acceptor = acceptor.clone();
+        let root = args.root.clone();
+        let index = args.index.clone();
+
+        tokio::spawn(async move {
+            match acceptor.accept(tcp_stream).await {
+                Ok(mut tls_stream) => {
+                    gmi::handle(from, &mut tls_stream, root, index).await;
+                }
+                Err(e) => {
+                    error!("TLS handshake failed from {}: {}", from, e);
+                }
+            }
+        });
+    }
 }

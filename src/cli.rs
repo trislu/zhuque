@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::{net::IpAddr, path::PathBuf};
 
 use clap::{Parser, ValueEnum};
 use tracing::level_filters::LevelFilter;
@@ -72,4 +72,20 @@ pub(crate) struct Args {
     pub(crate) trace: Trace,
     #[clap(value_enum, short='l', long="level", default_value_t = Level::Info, help = "trace output level")]
     pub(crate) level: Level,
+    #[arg(
+        short = 'r',
+        long = "root",
+        value_name = "PATH",
+        required = true,
+        help = "capsule root path"
+    )]
+    pub(crate) root: PathBuf,
+    #[arg(
+        short = 'i',
+        long = "index",
+        value_name = "FILE",
+        required = true,
+        help = "capsule index page"
+    )]
+    pub(crate) index: PathBuf,
 }
