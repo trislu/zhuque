@@ -44,12 +44,10 @@ async fn main() -> Result<()> {
         .with_file(true)
         // Display source code line numbers
         .with_line_number(true)
-        // Don't display the thread ID an event was recorded on
-        .with_thread_ids(true)
         // Don't display the event's target (module path)
         .with_target(false)
         // Log when entering and exiting spans
-        .with_span_events(FmtSpan::ENTER)
+        .with_span_events(FmtSpan::NEW)
         // log to a file
         .with_writer(non_blocking_writer)
         // Disabled ANSI color codes for better compatibility with some terminals
@@ -62,7 +60,7 @@ async fn main() -> Result<()> {
     // use that subscriber to process traces emitted after this point
     subscriber::set_global_default(sub).expect("Could not set global default subscriber");
 
-    debug!("{:?}", args);
+    debug!("with args: {:?}", args);
 
     let certs = CertificateDer::from_pem_file(&args.cert)
         .with_context(|| format!("failed to read cert pem file: {}", args.cert))
@@ -76,11 +74,9 @@ async fn main() -> Result<()> {
 
     // run https server
     let addr = SocketAddr::from((args.addr, args.port));
-    debug!("listening on {}", addr);
 
     let acceptor = TlsAcceptor::from(Arc::new(config));
     let listener = TcpListener::bind(addr).await?;
-    println!("Gemini server listening on {}", addr);
 
     loop {
         let (tcp_stream, from) = listener.accept().await?;

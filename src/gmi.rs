@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -127,10 +127,10 @@ async fn parse_request(stream: &mut TlsStream<TcpStream>) -> Result<Url, String>
     }
 }
 
-#[instrument(level = "info", skip(url))]
-async fn get_realpath(root: &PathBuf, index: &PathBuf, url: &Url) -> Result<PathBuf, String> {
+#[instrument(level = "debug", skip(root, index))]
+async fn get_realpath(root: &PathBuf, index: &Path, url: &Url) -> Result<PathBuf, String> {
     let realpath = match url.path().is_empty() {
-        true => root.join(index.clone()),
+        true => root.join(index),
         false => root.join(url.path().trim_start_matches('/')),
     };
     let realpath = match realpath.is_dir() {
@@ -149,14 +149,14 @@ async fn get_realpath(root: &PathBuf, index: &PathBuf, url: &Url) -> Result<Path
     }
 }
 
-#[instrument(level = "info", skip(stream))]
+#[instrument(level = "debug", skip(stream, root, index))]
 pub(crate) async fn handle(
     from: SocketAddr,
     stream: &mut TlsStream<TcpStream>,
     root: PathBuf,
     index: PathBuf,
 ) -> anyhow::Result<()> {
-    // step1: parse request url from stream
+    // parse request url from stream
     let url = match parse_request(stream).await {
         Ok(url) => {
             debug!("request URL: {url}");
@@ -172,6 +172,7 @@ pub(crate) async fn handle(
     };
 
     // TODO: handle INPUT with url.query()
+    // get the realpath of the requested file
     let realpath = match get_realpath(&root, &index, &url).await {
         Ok(p) => p,
         Err(e) => {
@@ -188,7 +189,7 @@ pub(crate) async fn handle(
         _ => tree_magic_mini::from_filepath(realpath.as_ref()).unwrap_or(GEMINI_MIME),
     };
 
-    info!("from {from} request {url} => realpath: {realpath:?}, mime: {mime}");
+    info!("REQ {from} => realpath: {realpath:?}, mime: {mime}");
 
     let response_header = format!("20 {mime}\r\n");
     stream.write_all(response_header.as_bytes()).await?;
