@@ -1,0 +1,32 @@
+# ZhuQue
+
+A [gemini](https://geminiprotocol.net/) protocol server written in Rust.
+
+> Named after the Vermilion Bird, one of the Four Symbols of ancient Chinese astronomy. In the traditional celestial map, the Gemini constellation lies within the Seven Mansions of ZhuQue.
+
+## Features(WIP)
+
+> see [protocol-specification](https://geminiprotocol.net/docs/protocol-specification.gmi)
+
+- Status 20
+- Status 40
+- Status 50/51/59
+
+## Demo
+
+A demo capsule is included under [demo](demo), together with a sample configuration file in [demo/config.toml](demo/config.toml).
+
+   ```bash
+   # start the server
+   cargo run -- --config demo/config.toml
+   # visit the capsule
+   gemini://localhost/
+   ```
+
+A screenshot from [lagrange](https://github.com/skyjake/lagrange), CJK [fonts](https://gmi.skyjake.fi/fonts/) required.
+
+![demo](images/demo.png?raw=true)
+
+## License
+
+This project is licensed under the MIT License.

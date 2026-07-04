@@ -1,8 +1,14 @@
 [package]
 name = "zhuque"
+description = "A Gemini protocol server implemented in rust"
 version = "0.1.0"
 authors = ["Lu Kai <mailto:lukai@mail.ustc.edu.cn>"]
 edition = "2024"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/trislu/zhuque"
+keywords = ["gemini", "server", "tls", "gemtext", "capsule"]
+categories = ["network-programming"]
 
 [dependencies]
 anyhow = "1.0"
