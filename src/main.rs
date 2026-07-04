@@ -24,7 +24,7 @@ mod gmi;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let args = Args::parse().resolve()?;
 
     let (non_blocking_writer, _guard) = match args.trace {
         Trace::Stdout => tracing_appender::non_blocking(stdout()),
@@ -63,10 +63,10 @@ async fn main() -> Result<()> {
     debug!("with args: {:?}", args);
 
     let certs = CertificateDer::from_pem_file(&args.cert)
-        .with_context(|| format!("failed to read cert pem file: {}", args.cert))
+        .with_context(|| format!("failed to read cert pem file: {}", args.cert.display()))
         .map(|c| vec![c])?;
     let key = PrivateKeyDer::from_pem_file(&args.key)
-        .with_context(|| format!("failed to read key pem file: {}", args.key))?;
+        .with_context(|| format!("failed to read key pem file: {}", args.key.display()))?;
 
     let config = ServerConfig::builder()
         .with_no_client_auth()
