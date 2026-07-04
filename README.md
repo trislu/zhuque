@@ -1,5 +1,10 @@
 # ZhuQue
 
+[![Rust CI](https://github.com/trislu/zhuque/actions/workflows/rust.yml/badge.svg)](https://github.com/trislu/zhuque/actions/workflows/rust.yml)
+[![Cargo Publish](https://github.com/trislu/zhuque/actions/workflows/publish.yml/badge.svg)](https://github.com/trislu/zhuque/actions/workflows/publish.yml)
+[![Latest Version](https://img.shields.io/crates/v/zhuque.svg)](https://crates.io/crates/zhuque)
+[![License](https://img.shields.io/crates/l/zhuque.svg)](LICENSE)
+
 A [gemini](https://geminiprotocol.net/) protocol server written in Rust.
 
 > Named after the Vermilion Bird, one of the Four Symbols of ancient Chinese astronomy. In the traditional celestial map, the Gemini constellation lies within the Seven Mansions of ZhuQue.
