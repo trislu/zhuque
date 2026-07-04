@@ -1,0 +1,4 @@
+# your gemlog
+
+=> gemini://geminiprotocol.net/              Official Website of Gemini Protocol
+=> gemini://localhost/                       ♊ Back to Capsule

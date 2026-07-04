@@ -1,0 +1,4 @@
+# 航行记录
+
+=> gemini://geminiprotocol.net/              双子座协议官方网站
+=> gemini://localhost/                       ♊ 返回接入仓

@@ -1,0 +1,6 @@
+# Demo Capsule
+
+Feels good
+
+=> gemini://localhost/gemlog/cn.gmi              中文 gemlog
+=> gemini://localhost/gemlog/en.gmi              English gemlog
