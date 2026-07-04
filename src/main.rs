@@ -11,7 +11,7 @@ use rustls::{
     ServerConfig,
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
 };
-use tokio::net::TcpListener;
+use tokio::{io::AsyncWriteExt, net::TcpListener};
 use tokio_rustls::{TlsAcceptor, rustls};
 use tracing::{debug, error, subscriber};
 use tracing_appender::rolling;
@@ -91,7 +91,15 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             match acceptor.accept(tcp_stream).await {
                 Ok(mut tls_stream) => {
-                    gmi::handle(from, &mut tls_stream, root, index).await;
+                    // handle the gemini request
+                    let _ = gmi::handle(from, &mut tls_stream, root, index).await;
+                    // flush and shutdown the stream
+                    if let Err(e) = tls_stream.flush().await {
+                        error!("Could not flush stream: {e}");
+                    };
+                    if let Err(e) = tls_stream.shutdown().await {
+                        error!("Could not shut down connection: {e}");
+                    };
                 }
                 Err(e) => {
                     error!("TLS handshake failed from {}: {}", from, e);

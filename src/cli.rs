@@ -84,7 +84,7 @@ pub(crate) struct Args {
         short = 'i',
         long = "index",
         value_name = "FILE",
-        required = true,
+        default_value = "index.gmi",
         help = "capsule index page"
     )]
     pub(crate) index: PathBuf,

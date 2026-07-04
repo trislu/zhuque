@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
@@ -12,8 +13,8 @@ macro_rules! gemini_scheme {
     };
 }
 
-const GEMINI_SCHEME: &'static str = gemini_scheme!();
-const GEMINI_MIME: &'static str = concat!("text/", gemini_scheme!());
+const GEMINI_SCHEME: &str = gemini_scheme!();
+const GEMINI_MIME: &str = concat!("text/", gemini_scheme!());
 
 const REQUEST_URI_MAX_BYTES: usize = 1024;
 const REQUEST_TAIL_CRLF: &str = "\r\n";
@@ -44,6 +45,8 @@ impl<T> WithErrorMessage<T> {
 
 struct TemporaryFailure;
 type Tempfail = WithErrorMessage<TemporaryFailure>;
+
+#[allow(dead_code)]
 impl Tempfail {
     const UNSPECIFIED: Self = Self::new(40);
     const SERVER_UNAVAILABLE: Self = Self::new(41);
@@ -54,6 +57,7 @@ impl Tempfail {
 
 struct PermanentFailure;
 type Permfail = WithErrorMessage<PermanentFailure>;
+#[allow(dead_code)]
 impl Permfail {
     const GENERAL: Self = Self::new(50);
     const NOT_FOUND: Self = Self::new(51);
@@ -64,20 +68,19 @@ impl Permfail {
 
 struct ClientCertificates;
 type Auth = WithErrorMessage<ClientCertificates>;
+#[allow(dead_code)]
 impl Auth {
     const CLIENT_CERTIFICATES_REQUIRED: Self = Self::new(60);
     const CERTIFICATE_NOT_AUTHORIZED: Self = Self::new(61);
     const CERTIFICATE_NOT_VALID: Self = Self::new(62);
 }
 
-#[tracing::instrument(level = "info", skip(stream))]
-async fn tls_shutdown(from: SocketAddr, stream: &mut TlsStream<TcpStream>) {
-    if let Err(e) = stream.flush().await {
-        error!("Could not flush stream: {e}");
-    };
-    if let Err(e) = stream.shutdown().await {
-        error!("Could not shut down connection: {e}");
-    };
+fn is_path_traversal(path: &str) -> bool {
+    let decoded = percent_encoding::percent_decode_str(path).decode_utf8_lossy();
+    let pathbuf = PathBuf::from(decoded.as_ref());
+    pathbuf
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
 }
 
 fn parse_request_url(request: &str) -> Result<Url, String> {
@@ -90,8 +93,8 @@ fn parse_request_url(request: &str) -> Result<Url, String> {
     }
 
     let request_url = &request[..term_pos];
-    if request_url.contains("../") || request_url.contains("/..") {
-        return Err("request url contains path traversal".to_string());
+    if is_path_traversal(request_url) {
+        return Err("request URL contains path traversal".to_string());
     }
 
     match Url::parse(request_url) {
@@ -99,7 +102,7 @@ fn parse_request_url(request: &str) -> Result<Url, String> {
             GEMINI_SCHEME => Ok(url),
             others => Err(format!("invalid URL scheme: {}", others)),
         },
-        Err(e) => Err(format!("invalid request url: {e}")),
+        Err(e) => Err(format!("invalid request URL: {e}")),
     }
 }
 
@@ -124,17 +127,39 @@ async fn parse_request(stream: &mut TlsStream<TcpStream>) -> Result<Url, String>
     }
 }
 
+#[tracing::instrument(level = "info")]
+async fn get_realpath(root: &PathBuf, index: &PathBuf, url: &Url) -> Result<PathBuf, String> {
+    let realpath = match url.path().is_empty() {
+        true => root.join(index.clone()),
+        false => root.join(url.path().trim_start_matches('/')),
+    };
+    let realpath = match realpath.is_dir() {
+        true => realpath.join("index.gmi"),
+        false => realpath.to_path_buf(),
+    };
+    match realpath.canonicalize() {
+        Ok(p) => {
+            if p.starts_with(root) {
+                Ok(p)
+            } else {
+                Err(Permfail::GENERAL.build("path traversal outside root"))
+            }
+        }
+        Err(_) => Err(Permfail::NOT_FOUND.build("target file not found")),
+    }
+}
+
 #[tracing::instrument(level = "info", skip(stream))]
 pub(crate) async fn handle(
     from: SocketAddr,
     stream: &mut TlsStream<TcpStream>,
     root: PathBuf,
     index: PathBuf,
-) {
+) -> anyhow::Result<()> {
     // step1: parse request url from stream
     let url = match parse_request(stream).await {
         Ok(url) => {
-            debug!("request url: {url}");
+            debug!("request URL: {url}");
             url
         }
         Err(e) => {
@@ -142,10 +167,33 @@ pub(crate) async fn handle(
             if let Err(e) = stream.write_all(e.as_bytes()).await {
                 error!("failed to write response: {e}");
             }
-            tls_shutdown(from, stream).await;
-            return;
+            return Ok(());
         }
     };
+
+    // TODO: handle INPUT with url.query()
+    let realpath = match get_realpath(&root, &index, &url).await {
+        Ok(p) => p,
+        Err(e) => {
+            error!("failed to get realpath: {e}");
+            if let Err(e) = stream.write_all(e.as_bytes()).await {
+                error!("failed to write response: {e}");
+            }
+            return Ok(());
+        }
+    };
+
+    let mime = match realpath.ends_with(".gmi") {
+        true => GEMINI_MIME,
+        false => tree_magic_mini::from_filepath(realpath.as_ref()).unwrap_or(GEMINI_MIME),
+    };
+
+    let response_header = format!("20 {mime}\r\n");
+    stream.write_all(response_header.as_bytes()).await?;
+
+    let mut file = fs::File::open(&realpath).await?;
+    tokio::io::copy(&mut file, stream).await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -162,41 +210,43 @@ mod tests {
     }
 
     #[test]
-    fn parse_request_url_success_and_errors() {
-        // success
+    fn parse_request_url_success() {
         let ok = parse_request_url("gemini://example.com/path\r\n").expect("should parse");
         assert_eq!(ok.scheme(), GEMINI_SCHEME);
         assert_eq!(ok.host_str(), Some("example.com"));
         assert_eq!(ok.path(), "/path");
-
-        // missing CRLF
-        let e = parse_request_url("gemini://example.com/path").unwrap_err();
-        assert_eq!(e, "missing CRLF termination");
-
-        // tailing data after CRLF
-        let e = parse_request_url("gemini://example.com/path\r\nextra").unwrap_err();
-        assert_eq!(e, "tailing data after CRLF termination");
-
-        // path traversal
-        let e = parse_request_url("gemini://example.com/../etc\r\n").unwrap_err();
-        assert_eq!(e, "request url contains path traversal");
-
-        // invalid scheme
-        let e = parse_request_url("http://example.com/\r\n").unwrap_err();
-        assert_eq!(e, "invalid URL scheme: http");
-
-        // invalid url
-        let e = parse_request_url("not a url\r\n").unwrap_err();
-        assert!(e.starts_with("invalid request url:"));
     }
 
     #[test]
-    fn parse_request_bytes_various() {
-        // empty
+    fn parse_request_url_rejects_invalid_requests() {
+        let e = parse_request_url("gemini://example.com/path").unwrap_err();
+        assert_eq!(e, "missing CRLF termination");
+
+        let e = parse_request_url("gemini://example.com/path\r\nextra").unwrap_err();
+        assert_eq!(e, "tailing data after CRLF termination");
+
+        let e = parse_request_url("gemini://example.com/../etc\r\n").unwrap_err();
+        assert_eq!(e, "request URL contains path traversal");
+
+        let e = parse_request_url("gemini://example.com/foo/../etc\r\n").unwrap_err();
+        assert_eq!(e, "request URL contains path traversal");
+
+        let e =
+            parse_request_url("gemini://example.com/foo/%2e%2e/%2e%2e/etc/passwd\r\n").unwrap_err();
+        assert_eq!(e, "request URL contains path traversal");
+
+        let e = parse_request_url("http://example.com/\r\n").unwrap_err();
+        assert_eq!(e, "invalid URL scheme: http");
+
+        let e = parse_request_url("not a URL\r\n").unwrap_err();
+        assert!(e.starts_with("invalid request URL:"));
+    }
+
+    #[test]
+    fn parse_request_bytes_rejects_bad_requests() {
         let err = parse_request_bytes(&[], 0).unwrap_err();
         assert_eq!(err, Permfail::BAD_REQUEST.build("empty request"));
 
-        // overflow
         let too_long = [1u8; REQUEST_MAX_BYTES + 1];
         let err = parse_request_bytes(&too_long, too_long.len()).unwrap_err();
         assert_eq!(
@@ -204,24 +254,27 @@ mod tests {
             Permfail::BAD_REQUEST.build("request exceeds maximum length")
         );
 
-        // not utf8
         let buf = [0xffu8];
         let err = parse_request_bytes(&buf, 1).unwrap_err();
         assert!(err.contains("not utf-8 request:"));
 
-        // valid
+        let err = parse_request_bytes(b"not a URL\r\n", 11).unwrap_err();
+        assert!(err.starts_with("59 invalid request URL:"));
+    }
+
+    #[test]
+    fn parse_request_bytes_accepts_valid_and_exactly_max_length_requests() {
         let req = b"gemini://host/hello\r\n";
-        let url = parse_request_bytes(req, req.len()).expect("valid url");
+        let url = parse_request_bytes(req, req.len()).expect("valid URL");
         assert_eq!(url.scheme(), "gemini");
         assert_eq!(url.host_str(), Some("host"));
         assert_eq!(url.path(), "/hello");
 
-        // edge case: exactly max length
         let mut long_req = b"gemini://host/".to_vec();
         long_req.extend(vec![b'a'; REQUEST_URI_MAX_BYTES - long_req.len()]);
         long_req.extend(b"\r\n");
         assert_eq!(long_req.len(), REQUEST_MAX_BYTES);
-        let url = parse_request_bytes(&long_req, long_req.len()).expect("valid url");
+        let url = parse_request_bytes(&long_req, long_req.len()).expect("valid URL");
         assert_eq!(url.scheme(), "gemini");
     }
 }

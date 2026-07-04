@@ -7,7 +7,9 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.6", features = ["derive"] }
+percent-encoding = "2.3"
 rustls = "0.23"
+tree_magic_mini = "3.2"
 tokio = { version = "1.49", features = ["full"] }
 tokio-rustls = "0.26"
 tracing = "0.1"
