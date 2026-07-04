@@ -1,4 +1,4 @@
-use std::{net::IpAddr, path::PathBuf};
+use std::{env, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
@@ -37,10 +37,16 @@ impl From<Level> for LevelFilter {
     }
 }
 
+const DEFAULT_HOST_ADDR: &str = "localhost";
+const DEFAULT_HOST_PORT: u16 = 1965;
+const DEFAULT_LOG_FILE: &str = "stderr";
+const DEFAULT_LOG_LEVEL: &str = "info";
+const DEFAULT_PAGE_INDEX: &str = "index.gmi";
+
 #[derive(Debug, Default, Deserialize)]
 struct ConfigFile {
     #[serde(default)]
-    addr: Option<IpAddr>,
+    addr: Option<String>,
     #[serde(default)]
     port: Option<u16>,
     #[serde(default)]
@@ -71,74 +77,94 @@ impl ConfigFile {
 }
 
 #[derive(Debug, Clone, Parser)]
-#[command(author, about = "zhuque", long_about = None)]
+#[command(
+    author,
+    about = "Serve Gemini capsules over TLS",
+    long_about = "Serve a Gemini capsule from a local directory over TLS. Configure it with CLI flags or a TOML config file.",
+    after_help = "Examples:\n  zhuque --config config.toml\n  zhuque --cert cert.pem --key key.pem --root gemcap"
+)]
 pub(crate) struct Args {
     #[arg(
         long = "config",
         value_name = "FILE",
-        help = "path to a TOML config file (mutually exclusive with CLI options)"
+        help = "path to a TOML config file; use this instead of passing every option on the command line"
     )]
     pub(crate) config: Option<PathBuf>,
     #[arg(
         short = 'a',
         long = "addr",
-        value_name = "ADDR",
-        help = "server address"
+        value_name = "HOST",
+        help = format!("address or hostname to bind the server to [default: {DEFAULT_HOST_ADDR}]")
     )]
-    pub(crate) addr: Option<IpAddr>,
-    #[arg(short = 'p', long = "port", value_name = "PORT", help = "server port")]
+    pub(crate) addr: Option<String>,
+    #[arg(
+        short = 'p',
+        long = "port",
+        value_name = "PORT",
+        help = format!("port to listen on [default: {DEFAULT_HOST_PORT}]")
+    )]
     pub(crate) port: Option<u16>,
     #[arg(
         short = 'c',
         long = "cert",
         value_name = "FILE",
-        help = "cert pem file path"
+        help = "path to the TLS certificate file (.pem)"
     )]
     pub(crate) cert: Option<PathBuf>,
     #[arg(
         short = 'k',
         long = "key",
         value_name = "FILE",
-        help = "key pem file path"
+        help = "path to the TLS private key file (.pem)"
     )]
     pub(crate) key: Option<PathBuf>,
-    #[clap(value_enum, short = 't', long = "trace", help = "trace output")]
+    #[clap(
+        value_enum,
+        short = 't',
+        long = "trace",
+        help = format!("where to send trace output [default: {DEFAULT_LOG_FILE}]")
+    )]
     pub(crate) trace: Option<Trace>,
-    #[clap(value_enum, short = 'l', long = "level", help = "trace output level")]
+    #[clap(
+        value_enum,
+        short = 'l',
+        long = "level",
+        help = format!("minimum level for trace output [default: {DEFAULT_LOG_LEVEL}]")
+    )]
     pub(crate) level: Option<Level>,
     #[arg(
         short = 'r',
         long = "root",
         value_name = "PATH",
-        help = "capsule root path"
+        help = "directory that contains the Gemini capsule contents"
     )]
     pub(crate) root: Option<PathBuf>,
     #[arg(
         short = 'i',
         long = "index",
         value_name = "FILE",
-        help = "capsule index page"
+        help = format!("default index file to serve for directory requests [default: {DEFAULT_PAGE_INDEX}]")
     )]
     pub(crate) index: Option<PathBuf>,
     #[arg(
         short = 'b',
         long = "badge",
         value_name = "TEXT",
-        help = "message shown when the server starts"
+        help = "startup message to display when the server begins"
     )]
     pub(crate) badge: Option<String>,
     #[arg(
         short = 'f',
         long = "footer",
         value_name = "TEXT",
-        help = "footer text appended to text/gemini content responses"
+        help = "text appended to Gemini responses when the MIME type is text/gemini"
     )]
     pub(crate) footer: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedArgs {
-    pub(crate) addr: IpAddr,
+    pub(crate) addr: String,
     pub(crate) port: u16,
     pub(crate) cert: PathBuf,
     pub(crate) key: PathBuf,
@@ -166,26 +192,63 @@ impl Args {
             }
 
             let config = ConfigFile::from_path(&path)?;
+            let root = config.root.context("missing root in config")?;
+            let root = if root.is_absolute() {
+                root
+            } else {
+                env::current_dir()?.join(root)
+            };
+            let cert = config.cert.context("missing cert in config")?;
+            let cert = if cert.is_absolute() {
+                cert
+            } else {
+                env::current_dir()?.join(cert)
+            };
+            let key = config.key.context("missing key in config")?;
+            let key = if key.is_absolute() {
+                key
+            } else {
+                env::current_dir()?.join(key)
+            };
             return Ok(ResolvedArgs {
-                addr: config.addr.unwrap_or("127.0.0.1".parse().unwrap()),
+                addr: config.addr.unwrap_or_else(|| "127.0.0.1".to_string()),
                 port: config.port.unwrap_or(1965),
-                cert: config.cert.context("missing cert in config")?,
-                key: config.key.context("missing key in config")?,
+                cert,
+                key,
                 trace: config.trace.unwrap_or(Trace::Stderr),
                 level: config.level.unwrap_or(Level::Info),
-                root: config.root.context("missing root in config")?,
+                root,
                 index: config.index.unwrap_or_else(|| PathBuf::from("index.gmi")),
                 badge: config.badge,
                 footer: config.footer,
             });
         }
 
+        let root = self.root.context("missing root")?;
+        let root = if root.is_absolute() {
+            root
+        } else {
+            env::current_dir()?.join(root)
+        };
+        let cert = self.cert.context("missing cert")?;
+        let cert = if cert.is_absolute() {
+            cert
+        } else {
+            env::current_dir()?.join(cert)
+        };
+        let key = self.key.context("missing key")?;
+        let key = if key.is_absolute() {
+            key
+        } else {
+            env::current_dir()?.join(key)
+        };
+
         Ok(ResolvedArgs {
-            addr: self.addr.unwrap_or("127.0.0.1".parse().unwrap()),
+            addr: self.addr.unwrap_or_else(|| "localhost".to_string()),
             port: self.port.unwrap_or(1965),
-            cert: self.cert.context("missing cert")?,
-            key: self.key.context("missing key")?,
-            root: self.root.context("missing root")?,
+            cert,
+            key,
+            root,
             trace: self.trace.unwrap_or(Trace::Stderr),
             level: self.level.unwrap_or(Level::Info),
             index: self.index.unwrap_or_else(|| PathBuf::from("index.gmi")),
@@ -230,7 +293,7 @@ footer = "server footer"
         .unwrap();
 
         let cfg = ConfigFile::from_path(&path).unwrap();
-        assert_eq!(cfg.addr, Some("127.0.0.1".parse().unwrap()));
+        assert_eq!(cfg.addr.as_deref(), Some("127.0.0.1"));
         assert_eq!(cfg.port, Some(1965));
         assert_eq!(cfg.cert.as_deref(), Some(Path::new("cert.pem")));
         assert_eq!(cfg.key.as_deref(), Some(Path::new("key.pem")));
@@ -239,6 +302,21 @@ footer = "server footer"
         assert_eq!(cfg.level, Some(Level::Info));
         assert_eq!(cfg.badge.as_deref(), Some("startup badge"));
         assert_eq!(cfg.footer.as_deref(), Some("server footer"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn config_file_accepts_hostnames() {
+        let path = temp_path("hostname");
+        fs::write(
+            &path,
+            "addr = 'localhost'\nroot = 'gemcap'\ncert = 'cert.pem'\nkey = 'key.pem'\n",
+        )
+        .unwrap();
+
+        let cfg = ConfigFile::from_path(&path).unwrap();
+        assert_eq!(cfg.addr.as_deref(), Some("localhost"));
 
         let _ = fs::remove_file(path);
     }

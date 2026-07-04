@@ -1,7 +1,6 @@
 use std::{
     env,
     io::{stderr, stdout},
-    net::SocketAddr,
     sync::Arc,
 };
 
@@ -73,7 +72,7 @@ async fn main() -> Result<()> {
         .with_single_cert(certs, key)?;
 
     // run https server
-    let addr = SocketAddr::from((args.addr, args.port));
+    let addr = format!("{}:{}", args.addr, args.port);
 
     // display the startup badge if provided
     if let Some(badge) = &args.badge {
@@ -81,7 +80,7 @@ async fn main() -> Result<()> {
     }
 
     let acceptor = TlsAcceptor::from(Arc::new(config));
-    let listener = TcpListener::bind(addr).await?;
+    let listener = TcpListener::bind(&addr).await?;
 
     loop {
         let (tcp_stream, from) = listener.accept().await?;
