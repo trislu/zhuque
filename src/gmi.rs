@@ -20,6 +20,10 @@ const REQUEST_URI_MAX_BYTES: usize = 1024;
 const REQUEST_TAIL_CRLF: &str = "\r\n";
 const REQUEST_MAX_BYTES: usize = REQUEST_URI_MAX_BYTES + REQUEST_TAIL_CRLF.len();
 
+fn can_append_footer(mime: &str) -> bool {
+    mime == GEMINI_MIME
+}
+
 #[derive(Debug, Clone)]
 struct WithErrorMessage<T> {
     code: usize,
@@ -149,12 +153,13 @@ async fn get_realpath(root: &PathBuf, index: &Path, url: &Url) -> Result<PathBuf
     }
 }
 
-#[instrument(level = "debug", skip(stream, root, index))]
+#[instrument(level = "debug", skip(stream, root, index, footer))]
 pub(crate) async fn handle(
     from: SocketAddr,
     stream: &mut TlsStream<TcpStream>,
     root: PathBuf,
     index: PathBuf,
+    footer: Option<&str>,
 ) -> anyhow::Result<()> {
     // parse request url from stream
     let url = match parse_request(stream).await {
@@ -196,6 +201,14 @@ pub(crate) async fn handle(
 
     let mut file = fs::File::open(&realpath).await?;
     tokio::io::copy(&mut file, stream).await?;
+
+    if let Some(footer) = footer
+        && can_append_footer(mime)
+    {
+        let footer_bytes = format!("\r\n{footer}");
+        stream.write_all(footer_bytes.as_bytes()).await?;
+    }
+
     Ok(())
 }
 
@@ -210,6 +223,13 @@ mod tests {
 
         let w2 = WithErrorMessage::<()>::new(99);
         assert_eq!(w2.build("oops"), "99 oops\r\n");
+    }
+
+    #[test]
+    fn footer_is_only_appended_for_gemini_mime() {
+        assert!(can_append_footer(GEMINI_MIME));
+        assert!(!can_append_footer("text/plain"));
+        assert!(!can_append_footer("image/png"));
     }
 
     #[test]

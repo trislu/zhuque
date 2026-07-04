@@ -55,6 +55,10 @@ struct ConfigFile {
     root: Option<PathBuf>,
     #[serde(default)]
     index: Option<PathBuf>,
+    #[serde(default)]
+    badge: Option<String>,
+    #[serde(default)]
+    footer: Option<String>,
 }
 
 impl ConfigFile {
@@ -75,22 +79,61 @@ pub(crate) struct Args {
         help = "path to a TOML config file (mutually exclusive with CLI options)"
     )]
     pub(crate) config: Option<PathBuf>,
-    #[arg(short = 'a', long = "addr", value_name = "ADDR", help = "server address")]
+    #[arg(
+        short = 'a',
+        long = "addr",
+        value_name = "ADDR",
+        help = "server address"
+    )]
     pub(crate) addr: Option<IpAddr>,
     #[arg(short = 'p', long = "port", value_name = "PORT", help = "server port")]
     pub(crate) port: Option<u16>,
-    #[arg(short = 'c', long = "cert", value_name = "FILE", help = "cert pem file path")]
+    #[arg(
+        short = 'c',
+        long = "cert",
+        value_name = "FILE",
+        help = "cert pem file path"
+    )]
     pub(crate) cert: Option<PathBuf>,
-    #[arg(short = 'k', long = "key", value_name = "FILE", help = "key pem file path")]
+    #[arg(
+        short = 'k',
+        long = "key",
+        value_name = "FILE",
+        help = "key pem file path"
+    )]
     pub(crate) key: Option<PathBuf>,
     #[clap(value_enum, short = 't', long = "trace", help = "trace output")]
     pub(crate) trace: Option<Trace>,
     #[clap(value_enum, short = 'l', long = "level", help = "trace output level")]
     pub(crate) level: Option<Level>,
-    #[arg(short = 'r', long = "root", value_name = "PATH", help = "capsule root path")]
+    #[arg(
+        short = 'r',
+        long = "root",
+        value_name = "PATH",
+        help = "capsule root path"
+    )]
     pub(crate) root: Option<PathBuf>,
-    #[arg(short = 'i', long = "index", value_name = "FILE", help = "capsule index page")]
+    #[arg(
+        short = 'i',
+        long = "index",
+        value_name = "FILE",
+        help = "capsule index page"
+    )]
     pub(crate) index: Option<PathBuf>,
+    #[arg(
+        short = 'b',
+        long = "badge",
+        value_name = "TEXT",
+        help = "message shown when the server starts"
+    )]
+    pub(crate) badge: Option<String>,
+    #[arg(
+        short = 'f',
+        long = "footer",
+        value_name = "TEXT",
+        help = "footer text appended to text/gemini content responses"
+    )]
+    pub(crate) footer: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +146,8 @@ pub(crate) struct ResolvedArgs {
     pub(crate) level: Level,
     pub(crate) root: PathBuf,
     pub(crate) index: PathBuf,
+    pub(crate) badge: Option<String>,
+    pub(crate) footer: Option<String>,
 }
 
 impl Args {
@@ -130,6 +175,8 @@ impl Args {
                 level: config.level.unwrap_or(Level::Info),
                 root: config.root.context("missing root in config")?,
                 index: config.index.unwrap_or_else(|| PathBuf::from("index.gmi")),
+                badge: config.badge,
+                footer: config.footer,
             });
         }
 
@@ -142,6 +189,8 @@ impl Args {
             trace: self.trace.unwrap_or(Trace::Stderr),
             level: self.level.unwrap_or(Level::Info),
             index: self.index.unwrap_or_else(|| PathBuf::from("index.gmi")),
+            badge: self.badge,
+            footer: self.footer,
         })
     }
 }
@@ -174,6 +223,8 @@ key = "key.pem"
 root = "gemcap"
 trace = "stderr"
 level = "info"
+badge = "startup badge"
+footer = "server footer"
 "#,
         )
         .unwrap();
@@ -186,6 +237,8 @@ level = "info"
         assert_eq!(cfg.root.as_deref(), Some(Path::new("gemcap")));
         assert_eq!(cfg.trace, Some(Trace::Stderr));
         assert_eq!(cfg.level, Some(Level::Info));
+        assert_eq!(cfg.badge.as_deref(), Some("startup badge"));
+        assert_eq!(cfg.footer.as_deref(), Some("server footer"));
 
         let _ = fs::remove_file(path);
     }
@@ -193,7 +246,11 @@ level = "info"
     #[test]
     fn config_file_rejects_cli_options() {
         let path = temp_path("mixed");
-        fs::write(&path, "root = 'gemcap'\ncert = 'cert.pem'\nkey = 'key.pem'\n").unwrap();
+        fs::write(
+            &path,
+            "root = 'gemcap'\ncert = 'cert.pem'\nkey = 'key.pem'\n",
+        )
+        .unwrap();
 
         let args = Args {
             config: Some(path.clone()),
@@ -205,6 +262,8 @@ level = "info"
             level: None,
             root: None,
             index: None,
+            badge: None,
+            footer: None,
         };
 
         let err = args.resolve().unwrap_err();

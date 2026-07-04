@@ -75,6 +75,11 @@ async fn main() -> Result<()> {
     // run https server
     let addr = SocketAddr::from((args.addr, args.port));
 
+    // display the startup badge if provided
+    if let Some(badge) = &args.badge {
+        println!("{badge}");
+    }
+
     let acceptor = TlsAcceptor::from(Arc::new(config));
     let listener = TcpListener::bind(addr).await?;
 
@@ -83,12 +88,14 @@ async fn main() -> Result<()> {
         let acceptor = acceptor.clone();
         let root = args.root.clone();
         let index = args.index.clone();
+        let footer = args.footer.clone();
 
         tokio::spawn(async move {
             match acceptor.accept(tcp_stream).await {
                 Ok(mut tls_stream) => {
                     // handle the gemini request
-                    let _ = gmi::handle(from, &mut tls_stream, root, index).await;
+                    let _ =
+                        gmi::handle(from, &mut tls_stream, root, index, footer.as_deref()).await;
                     // flush and shutdown the stream
                     if let Err(e) = tls_stream.flush().await {
                         error!("Could not flush stream: {e}");
