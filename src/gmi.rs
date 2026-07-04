@@ -4,7 +4,7 @@ use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
-use tracing::{debug, error};
+use tracing::{debug, error, info, instrument};
 use url::Url;
 
 macro_rules! gemini_scheme {
@@ -127,7 +127,7 @@ async fn parse_request(stream: &mut TlsStream<TcpStream>) -> Result<Url, String>
     }
 }
 
-#[tracing::instrument(level = "info")]
+#[instrument(level = "info", skip(url))]
 async fn get_realpath(root: &PathBuf, index: &PathBuf, url: &Url) -> Result<PathBuf, String> {
     let realpath = match url.path().is_empty() {
         true => root.join(index.clone()),
@@ -149,7 +149,7 @@ async fn get_realpath(root: &PathBuf, index: &PathBuf, url: &Url) -> Result<Path
     }
 }
 
-#[tracing::instrument(level = "info", skip(stream))]
+#[instrument(level = "info", skip(stream))]
 pub(crate) async fn handle(
     from: SocketAddr,
     stream: &mut TlsStream<TcpStream>,
@@ -183,10 +183,12 @@ pub(crate) async fn handle(
         }
     };
 
-    let mime = match realpath.ends_with(".gmi") {
-        true => GEMINI_MIME,
-        false => tree_magic_mini::from_filepath(realpath.as_ref()).unwrap_or(GEMINI_MIME),
+    let mime = match realpath.extension().and_then(|ext| ext.to_str()) {
+        Some("gmi") => GEMINI_MIME,
+        _ => tree_magic_mini::from_filepath(realpath.as_ref()).unwrap_or(GEMINI_MIME),
     };
+
+    info!("from {from} request {url} => realpath: {realpath:?}, mime: {mime}");
 
     let response_header = format!("20 {mime}\r\n");
     stream.write_all(response_header.as_bytes()).await?;
